@@ -9,6 +9,6 @@ WORKDIR /work
 ENTRYPOINT ["/slipscheme"]
 ARG VERSION
 ARG VCS_REF
-LABEL org.label-schema.vcs-url=https://github.com/coryb/slipscheme \
+LABEL org.label-schema.vcs-url=https://github.com/rdeusser/slipscheme \
       org.label-schema.vcs-ref=$VCS_REF \
       org.label-schema.version=$VERSION

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.4 - 2023-10-12
+
+* fix: rename module path [Robert Deusser] [[0666009](https://github.com/rdeusser/slipscheme/commit/0666009)]
+* feat: generate file names as snake case [Robert Deusser] [[53fe05d](https://github.com/rdeusser/slipscheme/commit/53fe05d)]
+* fix: deprecated functions [Robert Deusser] [[1ba4418](https://github.com/rdeusser/slipscheme/commit/1ba4418)]
+* fix linting issue [Cory Bennett] [[8c88bab](https://github.com/rdeusser/slipscheme/commit/8c88bab)]
+* add experimental support for oneOf and enum/const [Cory Bennett] [[f5d3b46](https://github.com/rdeusser/slipscheme/commit/f5d3b46)]
 ## 0.0.3 - 2020-11-07
 
 * add linter [Cory Bennett] [[7138767](https://github.com/coryb/slipscheme/commit/7138767)]

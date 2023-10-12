@@ -18,8 +18,8 @@ TODAY  := $(shell date +%Y-%m-%d)
 
 changes:
 	@git log --pretty=format:"* %s [%cn] [%h]" --no-merges ^v$(CURVER) HEAD $$(git ls-files | grep [.]go$ | grep -v _test[.]go ) go.mod | \
-		perl -pe 's{\[([a-f0-9]+)\]}{[[$$1](https://github.com/coryb/slipscheme/commit/$$1)]}g' | \
-		perl -pe 's{\#(\d+)}{[#$$1](https://github.com/coryb/slipscheme/issues/$$1)}g'; 
+		perl -pe 's{\[([a-f0-9]+)\]}{[[$$1](https://github.com/rdeusser/slipscheme/commit/$$1)]}g' | \
+		perl -pe 's{\#(\d+)}{[#$$1](https://github.com/rdeusser/slipscheme/issues/$$1)}g'; 
 
 update-changelog:
 	@echo "# Changelog" > CHANGELOG.md.new; \
