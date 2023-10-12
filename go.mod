@@ -1,4 +1,4 @@
-module github.com/coryb/slipscheme
+module github.com/rdeusser/slipscheme
 
 go 1.20
 
