@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +28,7 @@ func ExampleUsage() {
 }
 
 func TestOutputFiles(t *testing.T) {
-	tdir, err := ioutil.TempDir("", "slipscheme")
+	tdir, err := os.MkdirTemp("", "slipscheme")
 	noError(t, err)
 	runMain([]string{"slipscheme", "-dir", tdir, "sample.json"}, Stdio{
 		Stdout: os.Stdout,
@@ -55,13 +54,13 @@ func Example_stdoutSlice() {
 
 	// Output:
 	// // Stuff defined from schema:
-	// // {
-	// //   "title": "stuff",
-	// //   "type": "array",
-	// //   "items": {
-	// //     "type": "string"
-	// //   }
-	// // }
+	// //	{
+	// //	  "title": "stuff",
+	// //	  "type": "array",
+	// //	  "items": {
+	// //	    "type": "string"
+	// //	  }
+	// //	}
 	// type Stuff []string
 }
 

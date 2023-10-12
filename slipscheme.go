@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"unicode"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -177,7 +179,7 @@ func runMain(arguments []string, io Stdio) int {
 	}
 	err := processor.Process(args)
 	if err != nil {
-		fmt.Fprintf(io.Stderr, "Error: %s\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		return 1
 	}
 	return 0
@@ -362,6 +364,24 @@ func camelCase(name string) string {
 	}
 
 	return caseName
+}
+
+func snakeCase(name string) string {
+	var buf bytes.Buffer
+
+	for i, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			if i > 1 {
+				buf.WriteRune('_')
+			}
+			buf.WriteRune(unicode.ToLower(r))
+		default:
+			buf.WriteRune(r)
+		}
+	}
+
+	return buf.String()
 }
 
 func (s *SchemaProcessor) structComment(schema *Schema, typeName string) string {
@@ -591,7 +611,7 @@ func (s *SchemaProcessor) writeGoCode(typeName, code string) error {
 		fmt.Print(code)
 		return nil
 	}
-	file := path.Join(s.OutputDir, fmt.Sprintf("%s.go", typeName))
+	file := path.Join(s.OutputDir, fmt.Sprintf("%s.go", snakeCase(typeName)))
 	if !s.Overwrite {
 		if _, err := os.Stat(file); err == nil {
 			log.Printf("File %s already exists, skipping without -overwrite", file)
