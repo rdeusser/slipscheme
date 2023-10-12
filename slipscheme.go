@@ -5,14 +5,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"path"
 	"sort"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
+
+var caser = cases.Title(language.Und)
 
 // Schema represents JSON schema.
 type Schema struct {
@@ -207,7 +211,7 @@ func (s *SchemaProcessor) Process(files []string) error {
 			}
 			r = fh
 		}
-		b, err := ioutil.ReadAll(r)
+		b, err := io.ReadAll(r)
 		if err != nil {
 			return err
 		}
@@ -337,14 +341,12 @@ func setRoot(root, schema *Schema) {
 }
 
 func camelCase(name string) string {
-	caseName := strings.Title(
-		strings.Map(func(r rune) rune {
-			if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				return r
-			}
-			return ' '
-		}, name),
-	)
+	caseName := caser.String(strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return r
+		}
+		return ' '
+	}, name))
 	caseName = strings.ReplaceAll(caseName, " ", "")
 
 	for _, suffix := range []string{"Id", "Url", "Json", "Xml"} {
@@ -409,7 +411,7 @@ func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err er
 				}
 
 				// verify subTypeName is not a simple type
-				if strings.Title(subTypeName) == subTypeName {
+				if caser.String(subTypeName) == subTypeName {
 					typeName = strings.TrimPrefix(fmt.Sprintf("%sMap", subTypeName), "*")
 					typeData := fmt.Sprintf("%stype %s map[string]%s\n\n", s.structComment(schema, typeName), typeName, subTypeName)
 					if err := s.writeGoCode(typeName, typeData); err != nil {
@@ -431,7 +433,7 @@ func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err er
 
 		typeName = camelCase(schema.Name())
 		if typeName == "" {
-			if strings.Title(subTypeName) == subTypeName {
+			if caser.String(subTypeName) == subTypeName {
 				if strings.HasSuffix(subTypeName, "s") {
 					typeName = fmt.Sprintf("%ses", subTypeName)
 				} else {
