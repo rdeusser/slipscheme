@@ -522,7 +522,7 @@ func (s *SchemaProcessor) writeGoCode(typeName, code string) error {
 		fmt.Print(code)
 		return nil
 	}
-	file := path.Join(s.outputDir, fmt.Sprintf("%s.go", strcase.ToSnake(typeName)))
+	file := path.Join(s.outputDir, fmt.Sprintf("%s.go", strcase.ToSnakeWithIgnore(typeName, "Id")))
 	if !s.overwrite {
 		if _, err := os.Stat(file); err == nil {
 			log.Printf("File %s already exists, skipping without -overwrite", file)
