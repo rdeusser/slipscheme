@@ -548,6 +548,8 @@ func (s *SchemaProcessor) writeGoCode(typeName, code string) error {
 
 	`, strings.Join(os.Args, " "))
 
+	fmt.Printf("Writing %s\n", file)
+
 	if _, err := fh.Write([]byte(preamble)); err != nil {
 		return err
 	}
@@ -562,6 +564,7 @@ func (s *SchemaProcessor) writeGoCode(typeName, code string) error {
 		cmd.Stderr = s.stdio.Stderr
 		return cmd.Run()
 	}
+
 	return nil
 }
 
