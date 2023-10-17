@@ -28,6 +28,7 @@ var (
 		"Url":   "URL",
 		"Json":  "JSON",
 		"Xml":   "XML",
+		"Html":  "HTML",
 	}
 )
 
