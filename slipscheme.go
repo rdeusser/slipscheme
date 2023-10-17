@@ -1,24 +1,42 @@
-package main
+package slipscheme
 
 import (
-	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
 
+	"github.com/iancoleman/strcase"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
 
-var caser = cases.Title(language.Und)
+var (
+	caser               = cases.Title(language.Und)
+	defaultReplacements = map[string]string{
+		"Id":    "ID",
+		"Http":  "HTTP",
+		"Https": "HTTPS",
+		"Api":   "API",
+		"Url":   "URL",
+		"Json":  "JSON",
+		"Xml":   "XML",
+	}
+)
+
+// Stdio holds common io readers/writers
+type Stdio struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+}
 
 // Schema represents JSON schema.
 type Schema struct {
@@ -45,7 +63,13 @@ type Schema struct {
 func (s *Schema) Name() string {
 	name := s.Title
 	if name == "" {
-		name = s.ID
+		parts := strings.Split(s.ID, string(filepath.Separator))
+		name = strings.Map(func(r rune) rune {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				return r
+			}
+			return -1
+		}, parts[len(parts)-1])
 	}
 	if name == "" {
 		return s.Description
@@ -75,7 +99,7 @@ const (
 	STRING SchemaType = iota
 )
 
-var schemaTypes = map[string]SchemaType{
+var SchemaTypes = map[string]SchemaType{
 	"array":   ARRAY,
 	"boolean": BOOLEAN,
 	"integer": INTEGER,
@@ -93,11 +117,11 @@ func (s *SchemaType) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return err
 	}
-	if val, ok := schemaTypes[schemaType]; ok {
+	if val, ok := SchemaTypes[schemaType]; ok {
 		*s = val
 		return nil
 	}
-	return fmt.Errorf("Unknown schema type \"%s\"", schemaType)
+	return fmt.Errorf("unknown schema type \"%s\"", schemaType)
 }
 
 // MarshalJSON for SchemaType so we serialized the schema back
@@ -105,7 +129,7 @@ func (s *SchemaType) UnmarshalJSON(b []byte) error {
 func (s *SchemaType) MarshalJSON() ([]byte, error) {
 	schemaType := s.String()
 	if schemaType == "unknown" {
-		return nil, fmt.Errorf("Unknown Schema Type: %#v", s)
+		return nil, fmt.Errorf("unknown Schema Type: %#v", s)
 	}
 	return []byte(fmt.Sprintf("%q", schemaType)), nil
 }
@@ -132,69 +156,88 @@ func (s SchemaType) String() string {
 	return "unknown"
 }
 
-func main() {
-	exitCode := runMain(os.Args, Stdio{
-		Stdin:  os.Stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	})
-	os.Exit(exitCode)
-}
-
-// Stdio holds common io readers/writers
-type Stdio struct {
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-}
-
-func runMain(arguments []string, io Stdio) int {
-	flags := flag.NewFlagSet(arguments[0], flag.ExitOnError)
-	outputDir := flags.String("dir", ".", "output directory for go files")
-	pkgName := flags.String("pkg", "main", "package namespace for go files")
-	overwrite := flags.Bool("overwrite", false, "force overwriting existing go files")
-	stdout := flags.Bool("stdout", false, "print go code to stdout rather than files")
-	format := flags.Bool("fmt", true, "pass code through gofmt")
-	comments := flags.Bool("comments", true, "enable/disable print comments")
-
-	flags.SetOutput(io.Stderr)
-	flags.Parse(arguments[1:])
-
-	processor := &SchemaProcessor{
-		OutputDir:   *outputDir,
-		PackageName: *pkgName,
-		Overwrite:   *overwrite,
-		Stdout:      *stdout,
-		Fmt:         *format,
-		Comment:     *comments,
-		IO:          io,
-	}
-
-	args := flags.Args()
-	if len(args) == 0 {
-		flags.SetOutput(io.Stdout)
-		fmt.Fprintf(io.Stdout, "Usage: %s <schema file> [<schema file> ...]\n", arguments[0])
-		flags.PrintDefaults()
-		return 0
-	}
-	err := processor.Process(args)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		return 1
-	}
-	return 0
-}
-
 // SchemaProcessor object used to convert json schemas to golang structs
 type SchemaProcessor struct {
-	OutputDir   string
-	PackageName string
-	Overwrite   bool
-	Stdout      bool
-	Fmt         bool
-	Comment     bool
-	processed   map[string]bool
-	IO          Stdio
+	outputDir    string
+	packageName  string
+	overwrite    bool
+	stdout       bool
+	format       bool
+	comment      bool
+	stdio        Stdio
+	replacements map[string]string
+	processed    map[string]bool
+}
+
+type SchemaProcessorOption func(*SchemaProcessor)
+
+func OutputDir(dir string) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.outputDir = dir
+	}
+}
+
+func PackageName(name string) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.packageName = name
+	}
+}
+
+func Overwrite(overwrite bool) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.overwrite = overwrite
+	}
+}
+
+func Stdout(stdout bool) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.stdout = stdout
+	}
+}
+
+func Format(format bool) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.format = format
+	}
+}
+
+func Comment(writeComments bool) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.comment = writeComments
+	}
+}
+
+func IO(stdio Stdio) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.stdio = stdio
+	}
+}
+
+func Replacements(replacements map[string]string) SchemaProcessorOption {
+	return func(s *SchemaProcessor) {
+		s.replacements = replacements
+	}
+}
+
+func NewSchemaProcessor(options ...SchemaProcessorOption) *SchemaProcessor {
+	s := &SchemaProcessor{
+		stdio: Stdio{
+			Stdin:  os.Stdin,
+			Stdout: os.Stdout,
+			Stderr: os.Stderr,
+		},
+	}
+
+	for _, option := range options {
+		option(s)
+	}
+
+	// Non-negotiable replacements.
+	for k, v := range defaultReplacements {
+		s.replacements[k] = v
+	}
+
+	return s
 }
 
 // Process will read a list of json schema files, parse them
@@ -204,9 +247,9 @@ func (s *SchemaProcessor) Process(files []string) error {
 		var r io.Reader
 		var b []byte
 		if file == "-" {
-			r = s.IO.Stdin
+			r = s.stdio.Stdin
 		} else {
-			fh, err := os.OpenFile(file, os.O_RDONLY, 0644)
+			fh, err := os.OpenFile(file, os.O_RDONLY, 0o644)
 			defer fh.Close()
 			if err != nil {
 				return err
@@ -250,6 +293,294 @@ func (s *SchemaProcessor) ParseSchema(data []byte) (*Schema, error) {
 
 	setRoot(schema, schema)
 	return schema, nil
+}
+
+func (s *SchemaProcessor) structComment(schema *Schema, typeName string) string {
+	if !s.comment {
+		return ""
+	}
+	prettySchema, _ := json.MarshalIndent(schema, "// ", "  ")
+	return fmt.Sprintf("// %s defined from schema:\n// %s\n", typeName, prettySchema)
+}
+
+func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err error) {
+	switch schema.Type {
+	case OBJECT:
+		typeName = s.toCamel(schema.Name())
+		switch {
+		case schema.Properties != nil:
+			typeData := fmt.Sprintf("%stype %s struct {\n", s.structComment(schema, typeName), typeName)
+			keys := []string{}
+			for k := range schema.Properties {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				v := schema.Properties[k]
+				subTypeName, err := s.processSchema(v)
+				if err != nil {
+					return "", err
+				}
+				typeData += fmt.Sprintf("    %s %s `json:\"%s,omitempty\" yaml:\"%s,omitempty\"`\n", s.toCamel(k), subTypeName, k, k)
+			}
+			typeData += "}\n\n"
+			if err := s.writeGoCode(typeName, typeData); err != nil {
+				return "", err
+			}
+			typeName = fmt.Sprintf("*%s", typeName)
+		case schema.PatternProperties != nil:
+			keys := []string{}
+			for k := range schema.PatternProperties {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				v := schema.PatternProperties[k]
+				subTypeName, err := s.processSchema(v)
+				if err != nil {
+					return "", err
+				}
+
+				// verify subTypeName is not a simple type
+				if caser.String(subTypeName) == subTypeName {
+					typeName = strings.TrimPrefix(fmt.Sprintf("%sMap", subTypeName), "*")
+					typeData := fmt.Sprintf("%stype %s map[string]%s\n\n", s.structComment(schema, typeName), typeName, subTypeName)
+					if err := s.writeGoCode(typeName, typeData); err != nil {
+						return "", err
+					}
+				} else {
+					typeName = fmt.Sprintf("map[string]%s", subTypeName)
+				}
+			}
+		case schema.AdditionalProperties:
+			// TODO we can probably do better, but this is a catch-all for now
+			typeName = "map[string]interface{}"
+		}
+	case ARRAY:
+		subTypeName, err := s.processSchema(schema.Items)
+		if err != nil {
+			return "", err
+		}
+
+		typeName = s.toCamel(schema.Name())
+		if typeName == "" {
+			if caser.String(subTypeName) == subTypeName {
+				if strings.HasSuffix(subTypeName, "s") {
+					typeName = fmt.Sprintf("%ses", subTypeName)
+				} else {
+					typeName = fmt.Sprintf("%ss", subTypeName)
+				}
+			}
+		}
+		if typeName != "" {
+			typeName = strings.TrimPrefix(typeName, "*")
+			typeData := fmt.Sprintf("%stype %s []%s\n\n", s.structComment(schema, typeName), typeName, subTypeName)
+			if err := s.writeGoCode(typeName, typeData); err != nil {
+				return "", err
+			}
+		} else {
+			typeName = fmt.Sprintf("[]%s", subTypeName)
+		}
+	case ANY:
+		switch {
+		case len(schema.OneOf) > 0:
+			return s.mergeSchemas(schema, schema.OneOf...)
+		case schema.Const != "":
+			// Const is a special case of Enum
+			return "string", nil
+		case len(schema.Enum) > 0:
+			// TODO this is bogus, but assuming Enums are string types for now
+			return "string", nil
+		}
+		typeName = "interface{}"
+	case BOOLEAN:
+		typeName = "bool"
+	case INTEGER:
+		typeName = "int"
+	case NUMBER:
+		typeName = "float64"
+	case NULL:
+		typeName = "interface{}"
+	case STRING:
+		typeName = "string"
+	}
+	return
+}
+
+func (s *SchemaProcessor) mergeSchemas(parent *Schema, schemas ...*Schema) (typeName string, err error) {
+	switch len(schemas) {
+	case 0:
+		return "", fmt.Errorf("merging zero schemas")
+	case 1:
+		// TODO: Not sure this is correct, should the name come from the oneOf
+		// schema or the only constraint schema?
+		return s.processSchema(schemas[0])
+	}
+
+	mergedParent := &Schema{
+		Description: parent.Name(),
+		Root:        parent.Root,
+		Properties:  map[string]*Schema{},
+		Type:        OBJECT,
+	}
+
+	uncommonSchemas := map[string]*Schema{}
+	for _, schema := range schemas {
+		// TODO we need a Schema.Copy() function
+		uncommonSchemas[schema.Name()] = &Schema{
+			Description: schema.Name(),
+			Root:        parent.Root,
+			Properties:  map[string]*Schema{},
+			Type:        schema.Type,
+		}
+	}
+
+	// find any common properties, and assign them to mergeParent
+	// else create subtype with uncommon properties with `json:",inline"`
+
+	allProperties := map[string]int{}
+	for _, schema := range schemas {
+		for p := range schema.Properties {
+			allProperties[p]++
+		}
+	}
+
+	for _, schema := range schemas {
+		for p, v := range schema.Properties {
+			if allProperties[p] > 1 {
+				mergedParent.Properties[p] = v
+			} else {
+				uncommonSchemas[schema.Name()].Properties[p] = v
+			}
+		}
+	}
+
+	typeName = s.toCamel(mergedParent.Name())
+	typeData := fmt.Sprintf("%stype %s struct {\n", s.structComment(mergedParent, typeName), typeName)
+
+	keys := []string{}
+	for k := range mergedParent.Properties {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := mergedParent.Properties[k]
+		subTypeName, err := s.processSchema(v)
+		if err != nil {
+			return "", err
+		}
+		typeData += fmt.Sprintf("    %s %s `json:\"%s,omitempty\" yaml:\"%s,omitempty\"`\n", s.toCamel(k), subTypeName, k, k)
+	}
+
+	oneOfKeys := []string{}
+	for name, schema := range uncommonSchemas {
+		if len(schema.Properties) > 0 {
+			oneOfKeys = append(oneOfKeys, name)
+		}
+	}
+	sort.Strings(oneOfKeys)
+
+	for _, k := range oneOfKeys {
+		oneOfTypeName, err := s.processSchema(uncommonSchemas[k])
+		if err != nil {
+			return "", err
+		}
+		typeData += fmt.Sprintf("    %s %s `json:\",inline\" yaml:\",inline\"`\n", s.toCamel(k), oneOfTypeName)
+	}
+
+	typeData += "}\n\n"
+	if err := s.writeGoCode(typeName, typeData); err != nil {
+		return "", err
+	}
+	return typeName, nil
+}
+
+func (s *SchemaProcessor) writeGoCode(typeName, code string) error {
+	if seen, ok := s.processed[typeName]; ok && seen {
+		return nil
+	}
+	// mark schemas as processed so we dont print/write it out again
+	if s.processed == nil {
+		s.processed = map[string]bool{
+			typeName: true,
+		}
+	} else {
+		s.processed[typeName] = true
+	}
+
+	if s.stdout {
+		if s.format {
+			cmd := exec.Command("gofmt", "-s")
+			inPipe, _ := cmd.StdinPipe()
+			cmd.Stdout = s.stdio.Stdout
+			cmd.Stderr = s.stdio.Stderr
+			cmd.Start()
+			inPipe.Write([]byte(code))
+			inPipe.Close()
+			return cmd.Wait()
+		}
+		fmt.Print(code)
+		return nil
+	}
+	file := path.Join(s.outputDir, fmt.Sprintf("%s.go", strcase.ToSnake(typeName)))
+	if !s.overwrite {
+		if _, err := os.Stat(file); err == nil {
+			log.Printf("File %s already exists, skipping without -overwrite", file)
+			return nil
+		}
+	}
+	fh, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer fh.Close()
+	preamble := fmt.Sprintf("package %s\n", s.packageName)
+	preamble += fmt.Sprintf(`
+/////////////////////////////////////////////////////////////////////////
+// This Code is Generated by SlipScheme Project:
+// https://github.com/rdeusser/slipscheme
+//
+// Generated with command:
+// %s
+/////////////////////////////////////////////////////////////////////////
+//                            DO NOT EDIT                              //
+/////////////////////////////////////////////////////////////////////////
+
+	`, strings.Join(os.Args, " "))
+
+	if _, err := fh.Write([]byte(preamble)); err != nil {
+		return err
+	}
+	if _, err := fh.Write([]byte(code)); err != nil {
+		return err
+	}
+
+	if s.format {
+		cmd := exec.Command("gofmt", "-s", "-w", file)
+		cmd.Stdin = s.stdio.Stdin
+		cmd.Stdout = s.stdio.Stdout
+		cmd.Stderr = s.stdio.Stderr
+		return cmd.Run()
+	}
+	return nil
+}
+
+func (s *SchemaProcessor) toCamel(str string) string {
+	word := strcase.ToCamel(str)
+
+	for k, v := range s.replacements {
+		if strings.HasSuffix(word, k) {
+			return strings.TrimSuffix(word, k) + v
+		}
+	}
+
+	for k, v := range s.replacements {
+		if strings.HasPrefix(word, k) {
+			word = v + strings.TrimPrefix(word, k)
+		}
+	}
+
+	return word
 }
 
 func setRoot(root, schema *Schema) {
@@ -340,316 +671,4 @@ func setRoot(root, schema *Schema) {
 			*schema = *cast
 		}
 	}
-}
-
-func camelCase(name string) string {
-	caseName := caser.String(strings.Map(func(r rune) rune {
-		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-			return r
-		}
-		return ' '
-	}, name))
-	caseName = strings.ReplaceAll(caseName, " ", "")
-
-	for _, suffix := range []string{"Id", "Url", "Json", "Xml"} {
-		if strings.HasSuffix(caseName, suffix) {
-			return strings.TrimSuffix(caseName, suffix) + strings.ToUpper(suffix)
-		}
-	}
-
-	for _, prefix := range []string{"Url", "Json", "Xml"} {
-		if strings.HasPrefix(caseName, prefix) {
-			return strings.ToUpper(prefix) + strings.TrimPrefix(caseName, prefix)
-		}
-	}
-
-	return caseName
-}
-
-func snakeCase(name string) string {
-	var buf bytes.Buffer
-
-	for i, r := range name {
-		switch {
-		case r >= 'A' && r <= 'Z':
-			if i > 1 {
-				buf.WriteRune('_')
-			}
-			buf.WriteRune(unicode.ToLower(r))
-		default:
-			buf.WriteRune(r)
-		}
-	}
-
-	return buf.String()
-}
-
-func (s *SchemaProcessor) structComment(schema *Schema, typeName string) string {
-	if !s.Comment {
-		return ""
-	}
-	prettySchema, _ := json.MarshalIndent(schema, "// ", "  ")
-	return fmt.Sprintf("// %s defined from schema:\n// %s\n", typeName, prettySchema)
-}
-
-func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err error) {
-	switch schema.Type {
-	case OBJECT:
-		typeName = camelCase(schema.Name())
-		switch {
-		case schema.Properties != nil:
-			typeData := fmt.Sprintf("%stype %s struct {\n", s.structComment(schema, typeName), typeName)
-			keys := []string{}
-			for k := range schema.Properties {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				v := schema.Properties[k]
-				subTypeName, err := s.processSchema(v)
-				if err != nil {
-					return "", err
-				}
-				typeData += fmt.Sprintf("    %s %s `json:\"%s,omitempty\" yaml:\"%s,omitempty\"`\n", camelCase(k), subTypeName, k, k)
-			}
-			typeData += "}\n\n"
-			if err := s.writeGoCode(typeName, typeData); err != nil {
-				return "", err
-			}
-			typeName = fmt.Sprintf("*%s", typeName)
-		case schema.PatternProperties != nil:
-			keys := []string{}
-			for k := range schema.PatternProperties {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				v := schema.PatternProperties[k]
-				subTypeName, err := s.processSchema(v)
-				if err != nil {
-					return "", err
-				}
-
-				// verify subTypeName is not a simple type
-				if caser.String(subTypeName) == subTypeName {
-					typeName = strings.TrimPrefix(fmt.Sprintf("%sMap", subTypeName), "*")
-					typeData := fmt.Sprintf("%stype %s map[string]%s\n\n", s.structComment(schema, typeName), typeName, subTypeName)
-					if err := s.writeGoCode(typeName, typeData); err != nil {
-						return "", err
-					}
-				} else {
-					typeName = fmt.Sprintf("map[string]%s", subTypeName)
-				}
-			}
-		case schema.AdditionalProperties:
-			// TODO we can probably do better, but this is a catch-all for now
-			typeName = "map[string]interface{}"
-		}
-	case ARRAY:
-		subTypeName, err := s.processSchema(schema.Items)
-		if err != nil {
-			return "", err
-		}
-
-		typeName = camelCase(schema.Name())
-		if typeName == "" {
-			if caser.String(subTypeName) == subTypeName {
-				if strings.HasSuffix(subTypeName, "s") {
-					typeName = fmt.Sprintf("%ses", subTypeName)
-				} else {
-					typeName = fmt.Sprintf("%ss", subTypeName)
-				}
-			}
-		}
-		if typeName != "" {
-			typeName = strings.TrimPrefix(typeName, "*")
-			typeData := fmt.Sprintf("%stype %s []%s\n\n", s.structComment(schema, typeName), typeName, subTypeName)
-			if err := s.writeGoCode(typeName, typeData); err != nil {
-				return "", err
-			}
-		} else {
-			typeName = fmt.Sprintf("[]%s", subTypeName)
-		}
-	case ANY:
-		switch {
-		case len(schema.OneOf) > 0:
-			return s.mergeSchemas(schema, schema.OneOf...)
-		case schema.Const != "":
-			// Const is a special case of Enum
-			return "string", nil
-		case len(schema.Enum) > 0:
-			// TODO this is bogus, but assuming Enums are string types for now
-			return "string", nil
-		}
-		typeName = "interface{}"
-	case BOOLEAN:
-		typeName = "bool"
-	case INTEGER:
-		typeName = "int"
-	case NUMBER:
-		typeName = "float64"
-	case NULL:
-		typeName = "interface{}"
-	case STRING:
-		typeName = "string"
-	}
-	return
-}
-
-func (s *SchemaProcessor) mergeSchemas(parent *Schema, schemas ...*Schema) (typeName string, err error) {
-	switch len(schemas) {
-	case 0:
-		return "", fmt.Errorf("Merging zero schemas")
-	case 1:
-		// TODO: Not sure this is correct, should the name come from the oneOf
-		// schema or the only constraint schema?
-		return s.processSchema(schemas[0])
-	}
-
-	mergedParent := &Schema{
-		Description: parent.Name(),
-		Root:        parent.Root,
-		Properties:  map[string]*Schema{},
-		Type:        OBJECT,
-	}
-
-	uncommonSchemas := map[string]*Schema{}
-	for _, schema := range schemas {
-		// TODO we need a Schema.Copy() function
-		uncommonSchemas[schema.Name()] = &Schema{
-			Description: schema.Name(),
-			Root:        parent.Root,
-			Properties:  map[string]*Schema{},
-			Type:        schema.Type,
-		}
-	}
-
-	// find any common properties, and assign them to mergeParent
-	// else create subtype with uncommon properties with `json:",inline"`
-
-	allProperties := map[string]int{}
-	for _, schema := range schemas {
-		for p := range schema.Properties {
-			allProperties[p]++
-		}
-	}
-
-	for _, schema := range schemas {
-		for p, v := range schema.Properties {
-			if allProperties[p] > 1 {
-				mergedParent.Properties[p] = v
-			} else {
-				uncommonSchemas[schema.Name()].Properties[p] = v
-			}
-		}
-	}
-
-	typeName = camelCase(mergedParent.Name())
-	typeData := fmt.Sprintf("%stype %s struct {\n", s.structComment(mergedParent, typeName), typeName)
-
-	keys := []string{}
-	for k := range mergedParent.Properties {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := mergedParent.Properties[k]
-		subTypeName, err := s.processSchema(v)
-		if err != nil {
-			return "", err
-		}
-		typeData += fmt.Sprintf("    %s %s `json:\"%s,omitempty\" yaml:\"%s,omitempty\"`\n", camelCase(k), subTypeName, k, k)
-	}
-
-	oneOfKeys := []string{}
-	for name, schema := range uncommonSchemas {
-		if len(schema.Properties) > 0 {
-			oneOfKeys = append(oneOfKeys, name)
-		}
-	}
-	sort.Strings(oneOfKeys)
-
-	for _, k := range oneOfKeys {
-		oneOfTypeName, err := s.processSchema(uncommonSchemas[k])
-		if err != nil {
-			return "", err
-		}
-		typeData += fmt.Sprintf("    %s %s `json:\",inline\" yaml:\",inline\"`\n", camelCase(k), oneOfTypeName)
-	}
-
-	typeData += "}\n\n"
-	if err := s.writeGoCode(typeName, typeData); err != nil {
-		return "", err
-	}
-	return typeName, nil
-}
-
-func (s *SchemaProcessor) writeGoCode(typeName, code string) error {
-	if seen, ok := s.processed[typeName]; ok && seen {
-		return nil
-	}
-	// mark schemas as processed so we dont print/write it out again
-	if s.processed == nil {
-		s.processed = map[string]bool{
-			typeName: true,
-		}
-	} else {
-		s.processed[typeName] = true
-	}
-
-	if s.Stdout {
-		if s.Fmt {
-			cmd := exec.Command("gofmt", "-s")
-			inPipe, _ := cmd.StdinPipe()
-			cmd.Stdout = s.IO.Stdout
-			cmd.Stderr = s.IO.Stderr
-			cmd.Start()
-			inPipe.Write([]byte(code))
-			inPipe.Close()
-			return cmd.Wait()
-		}
-		fmt.Print(code)
-		return nil
-	}
-	file := path.Join(s.OutputDir, fmt.Sprintf("%s.go", snakeCase(typeName)))
-	if !s.Overwrite {
-		if _, err := os.Stat(file); err == nil {
-			log.Printf("File %s already exists, skipping without -overwrite", file)
-			return nil
-		}
-	}
-	fh, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer fh.Close()
-	preamble := fmt.Sprintf("package %s\n", s.PackageName)
-	preamble += fmt.Sprintf(`
-/////////////////////////////////////////////////////////////////////////
-// This Code is Generated by SlipScheme Project:
-// https://github.com/rdeusser/slipscheme
-// 
-// Generated with command:
-// %s
-/////////////////////////////////////////////////////////////////////////
-//                            DO NOT EDIT                              //
-/////////////////////////////////////////////////////////////////////////
-
-`, strings.Join(os.Args, " "))
-
-	if _, err := fh.Write([]byte(preamble)); err != nil {
-		return err
-	}
-	if _, err := fh.Write([]byte(code)); err != nil {
-		return err
-	}
-
-	if s.Fmt {
-		cmd := exec.Command("gofmt", "-s", "-w", file)
-		cmd.Stdin = s.IO.Stdin
-		cmd.Stdout = s.IO.Stdout
-		cmd.Stderr = s.IO.Stderr
-		return cmd.Run()
-	}
-	return nil
 }
