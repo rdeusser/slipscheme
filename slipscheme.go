@@ -56,7 +56,7 @@ type Schema struct {
 	Enum                 []string           `json:"enum,omitempty"`
 	Root                 *Schema            `json:"-"`
 	// only populated on Root node
-	raw map[string]interface{}
+	raw map[string]any
 }
 
 // Name will attempt to determine the name of the Schema element using
@@ -285,7 +285,7 @@ func (s *SchemaProcessor) ParseSchema(data []byte) (*Schema, error) {
 		return nil, err
 	}
 
-	raw := map[string]interface{}{}
+	raw := map[string]any{}
 	err = json.Unmarshal(data, &raw)
 	if err != nil {
 		return nil, err
@@ -355,7 +355,7 @@ func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err er
 			}
 		case schema.AdditionalProperties:
 			// TODO we can probably do better, but this is a catch-all for now
-			typeName = "map[string]interface{}"
+			typeName = "map[string]any"
 		}
 	case ARRAY:
 		subTypeName, err := s.processSchema(schema.Items)
@@ -393,7 +393,7 @@ func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err er
 			// TODO this is bogus, but assuming Enums are string types for now
 			return "string", nil
 		}
-		typeName = "interface{}"
+		typeName = "any"
 	case BOOLEAN:
 		typeName = "bool"
 	case INTEGER:
@@ -401,7 +401,7 @@ func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err er
 	case NUMBER:
 		typeName = "float64"
 	case NULL:
-		typeName = "interface{}"
+		typeName = "any"
 	case STRING:
 		typeName = "string"
 	}
@@ -600,7 +600,7 @@ func setRoot(root, schema *Schema) {
 
 	if schema.Ref != "" {
 		schemaPath := strings.Split(schema.Ref, "/")
-		var ctx interface{}
+		var ctx any
 		ctx = schema
 		for _, part := range schemaPath {
 			switch part {
@@ -623,14 +623,14 @@ func setRoot(root, schema *Schema) {
 				}
 				// no match in the structure, so loop through the raw document
 				// in case they are using out-of-spec paths ie #/$special/thing
-				var cursor interface{} = root.raw
+				var cursor any = root.raw
 				for _, part := range schemaPath {
 					if part == "#" {
 						continue
 					}
-					cast, ok := cursor.(map[string]interface{})
+					cast, ok := cursor.(map[string]any)
 					if !ok {
-						panic(fmt.Sprintf("Expected map[string]interface{}, got: %T at path %q in $ref %q", cursor, part, schema.Ref))
+						panic(fmt.Sprintf("Expected map[string]any, got: %T at path %q in $ref %q", cursor, part, schema.Ref))
 					}
 					value, ok := cast[part]
 					if !ok {
