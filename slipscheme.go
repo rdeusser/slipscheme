@@ -356,6 +356,20 @@ func (s *SchemaProcessor) processSchema(schema *Schema) (typeName string, err er
 		case schema.AdditionalProperties:
 			// TODO we can probably do better, but this is a catch-all for now
 			typeName = "map[string]any"
+
+		default:
+			// If the type name is empty, just return any.
+			if typeName == "" {
+				return "any", err
+			}
+			// If we don't have any properties to speak of, make sure the type name is an empty
+			// struct to avoid compilation errors for missing types.
+			typeData := fmt.Sprintf("%stype %s struct {\n", s.structComment(schema, typeName), typeName)
+			typeData += "}\n\n"
+			if err := s.writeGoCode(typeName, typeData); err != nil {
+				return "", err
+			}
+			typeName = fmt.Sprintf("*%s", typeName)
 		}
 	case ARRAY:
 		subTypeName, err := s.processSchema(schema.Items)
